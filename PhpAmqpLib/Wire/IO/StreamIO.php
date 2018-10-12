@@ -9,8 +9,8 @@ use PhpAmqpLib\Wire\AMQPWriter;
 
 class StreamIO extends AbstractIO
 {
-    const READ_BUFFER_WAIT_INTERVAL = 100000; // 0.1 second
-    const READ_BUFFER_LIMIT         = 300; // 0.1 * 300 = 30 seconds
+    const READ_BUFFER_WAIT_INTERVAL = 500000; // 0.5 second
+    const READ_BUFFER_MAX_ATTEMPTS  = 60; // 0.5 * 60 = 30 seconds
 
     /** @var string */
     protected $protocol;
@@ -210,7 +210,17 @@ class StreamIO extends AbstractIO
     {
         $this->check_heartbeat();
 
-        $read_attempts = 0;
+        if ($this->heartbeat > 0) {
+            # heartbeat is in seconds, we want to have enough read
+            # attempts to give the heartbeat mechanism a chance to work.
+            # If heartbeat is enabled we should wait at least 2x the
+            # heartbeat value in seconds, which is why we multiply by
+            # 5 here
+            $read_attempts = $this->heartbeat * 5;
+        } else {
+            $read_attempts = self::READ_BUFFER_MAX_ATTEMPTS;
+        }
+
         $read = 0;
         $data = '';
 
@@ -233,8 +243,8 @@ class StreamIO extends AbstractIO
             }
 
             if ($buffer === '') {
-                $read_attempts++;
-                if ($read_attempts > self::READ_BUFFER_LIMIT) {
+                $read_attempts--;
+                if ($read_attempts == 0) {
                     throw new AMQPTimeoutException('Too many read attempts detected in StreamIO');
                 }
                 $this->select(0, self::READ_BUFFER_WAIT_INTERVAL);
