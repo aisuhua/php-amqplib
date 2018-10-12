@@ -9,7 +9,8 @@ use PhpAmqpLib\Wire\AMQPWriter;
 
 class StreamIO extends AbstractIO
 {
-    const READ_BUFFER_WAIT_INTERVAL = 100000;
+    const READ_BUFFER_WAIT_INTERVAL = 100000; // 0.1 second
+    const READ_BUFFER_LIMIT         = 300; // 0.1 * 300 = 30 seconds
 
     /** @var string */
     protected $protocol;
@@ -209,6 +210,7 @@ class StreamIO extends AbstractIO
     {
         $this->check_heartbeat();
 
+        $read_attempts = 0;
         $read = 0;
         $data = '';
 
@@ -231,15 +233,19 @@ class StreamIO extends AbstractIO
             }
 
             if ($buffer === '') {
-                if ($this->canDispatchPcntlSignal) {
-                    $this->select(0, self::READ_BUFFER_WAIT_INTERVAL);
-                    pcntl_signal_dispatch();
-                } else {
-                    $this->check_heartbeat();
+                $read_attempts++;
+                if ($read_attempts > self::READ_BUFFER_LIMIT) {
+                    throw new AMQPTimeoutException('Too many read attempts detected in StreamIO');
                 }
+                $this->select(0, self::READ_BUFFER_WAIT_INTERVAL);
+                if ($this->canDispatchPcntlSignal) {
+                    pcntl_signal_dispatch();
+                }
+                $this->check_heartbeat();
                 continue;
             }
 
+            $this->last_read = microtime(true);
             $read += mb_strlen($buffer, 'ASCII');
             $data .= $buffer;
         }
@@ -254,7 +260,6 @@ class StreamIO extends AbstractIO
             );
         }
 
-        $this->last_read = microtime(true);
         return $data;
     }
 
